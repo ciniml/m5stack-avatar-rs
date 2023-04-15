@@ -61,6 +61,7 @@ impl<Color: PixelColor> DrawableGraphics for DrawableEye<Color> {
     }
 }
 
+
 impl <Context: EyeContext> Component for Eye<Context> {
     type Context = Context;
     type Drawable = DrawableEye<Context::Color>;
@@ -85,14 +86,14 @@ impl <Context: EyeContext> Component for Eye<Context> {
         let offset_y = context.vertical() * 3.0;
         let expression = context.expression();
         if open_ratio > 0.0 {
-            let body = Circle::new(Point::new((x + offset_x) as i32, (y + offset_y) as i32), (self.radius * 2.0) as u32);
+            let body = Circle::new(Point::new((x + offset_x - self.radius) as i32, (y + offset_y - self.radius) as i32), (self.radius * 2.0) as u32);
             match expression {
                 Expression::Angry | Expression::Sad => {
                     let x0 = x + offset_x - self.radius;
                     let y0 = y + offset_y - self.radius;
                     let x1 = x0 + self.radius * 2.0;
                     let y1 = y0;
-                    let x2 = if !self.is_left != !(expression == Expression::Sad) { x0 } else {  x1 };
+                    let x2 = if self.is_left ^ (expression == Expression::Angry) { x0 } else {  x1 };
                     let y2 = y0 + self.radius;
                     let triangle = Triangle::new(Point::new(x0 as i32, y0 as i32), Point::new(x1 as i32, y1 as i32), Point::new(x2 as i32, y2 as i32));
                     Self::Drawable {
@@ -111,7 +112,8 @@ impl <Context: EyeContext> Component for Eye<Context> {
                     let w = self.radius * 2.0 + 4.0;
                     let h = self.radius + 2.0;
                     let open_eye_happy_circle = if expression == Expression::Happy {
-                        Some(Circle::new(Point::new((x + offset_x) as i32, (y + offset_y) as i32), (self.radius / 1.5) as u32))
+                        let radius = self.radius / 1.5;
+                        Some(Circle::new(Point::new((x + offset_x - radius).round() as i32, (y + offset_y - radius).round() as i32), (radius * 2.0).round() as u32))
                     } else {
                         None
                     };
@@ -129,6 +131,17 @@ impl <Context: EyeContext> Component for Eye<Context> {
                         close_eye: None,
                     }
                 },
+                _ => {
+                    Self::Drawable {
+                        style,
+                        mask_style,
+                        open_eye_main: Some(body),
+                        open_eye_triangle: None,
+                        open_eye_happy_circle: None,
+                        open_eye_half_mask: None,
+                        close_eye: None,
+                    }
+                }
             }
         } else {
             let x1 = x - self.radius + offset_x;

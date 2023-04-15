@@ -28,7 +28,7 @@ pub struct DrawContext<Color: PixelColor> {
 impl<Color: PixelColor + Default> Default for DrawContext<Color> {
     fn default() -> Self {
         Self {
-            expression: Expression::Happy,
+            expression: Expression::Neutral,
             breath: 0.0,
             gaze_horizontal: 0.0,
             gaze_vertical: 0.0,
@@ -142,9 +142,9 @@ impl<Context: FaceContext> Default for Face<Context> {
             eye_l: Eye::new(8.0, false),
             eye_r: Eye::new(8.0, true),
             mouth: Mouth::new(50, 90, 4, 60),
-            pos_eye_l: Rectangle::new(Point::new(96, 230), Size::zero()),
-            pos_eye_r: Rectangle::new(Point::new(96, 90), Size::zero()),
-            pos_mouth: Rectangle::new(Point::new(148, 163), Size::zero()),
+            pos_eye_l: Rectangle::new(Point::new(230, 96), Size::zero()),
+            pos_eye_r: Rectangle::new(Point::new(90, 93), Size::zero()),
+            pos_mouth: Rectangle::new(Point::new(163, 148), Size::zero()),
             bounding_rect: Rectangle::new(Point::new(0, 0), Size::new(320, 240)),
         }
     }

@@ -11,3 +11,5 @@ pub mod components;
 pub use palette::*;
 pub use component::*;
 pub use expression::*;
+pub use animation::*;
+pub use avatar::*;

@@ -7,9 +7,16 @@ edition = "2021"
 
 [dependencies]
 embedded-graphics = "0.7.1"
-num-derive = "0.3.3"
-num-traits = "0.2.15"
+embedded-graphics-simulator = { version = "0.4.1", optional = true }
 num_enum = "0.6.0"
 rand_core = "0.6.4"
 rand_xorshift = "0.3.0"
 variant_count = "1.1.0"
+
+[features]
+default = []
+std = ["embedded-graphics-simulator"]
+
+[[example]]
+name = "mock"
+required-features = ["std"]

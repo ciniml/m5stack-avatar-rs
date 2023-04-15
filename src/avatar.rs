@@ -22,6 +22,9 @@ impl<Color: PixelColor> Avatar<Color> {
             runner: AnimationRunner::new(context, frames_per_second, FaceAnimator::new()),
         }
     }
+    pub fn context(&mut self) -> &mut DrawContext<Color> {
+        self.runner.context()
+    }
     pub fn run<D: DrawTarget<Color = Color>, T: Timer>(&mut self, draw_target: &mut D, timer: &T) -> Result<(), <D as DrawTarget>::Error> {
         let now = timer.timestamp_milliseconds();
         let last_time = self.last_time.unwrap_or(now);
