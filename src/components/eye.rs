@@ -7,13 +7,13 @@ use crate::{BasicPaletteContext, ExpressionContext, Expression};
 use crate::component::Component;
 use crate::palette::{Palette, BasicPaletteKey};
 
-pub struct Eye<Context: EyeContext> {
+pub struct Eye<'a, Context: EyeContext<'a>> {
     radius: f32,
     is_left: bool,
-    context: PhantomData<Context>,
+    context: PhantomData<&'a Context>,
 }
 
-impl<Context: EyeContext> Eye<Context> {
+impl<'a, Context: EyeContext<'a>> Eye<'a, Context> {
     pub fn new(radius: f32, is_left: bool) -> Self {
         Self {
             radius,
@@ -23,7 +23,7 @@ impl<Context: EyeContext> Eye<Context> {
     }
 }
 
-pub trait EyeContext: BasicPaletteContext +  GazeContext + ExpressionContext {
+pub trait EyeContext<'a>: BasicPaletteContext<'a> +  GazeContext + ExpressionContext {
     fn open_ratio(&self) -> f32;
     fn set_open_ratio(&mut self, value: f32);
 }
@@ -61,10 +61,10 @@ impl<Color: PixelColor> DrawableGraphics for DrawableEye<Color> {
     }
 }
 
-impl <Context: EyeContext> Component for Eye<Context> {
+impl <'a, Context: EyeContext<'a>> Component<'a> for Eye<'a, Context> {
     type Context = Context;
     type Drawable = DrawableEye<Context::Color>;
-    fn render(&self, bounding_rect: Rectangle, context: &Self::Context) -> Self::Drawable {
+    fn render(&self, bounding_rect: Rectangle, context: &'a Self::Context) -> Self::Drawable {
         let foreground_color = context.get_basic_palette().get_color(&BasicPaletteKey::Primary);
         let background_color = context.get_basic_palette().get_color(&BasicPaletteKey::Background);
         let open_ratio = context.open_ratio();

@@ -234,16 +234,16 @@ pub struct EffectGeometry {
     pub size: u32,
 }
 
-pub struct Effect<Context: MouthContext + BasicPaletteContext + ExpressionContext> {
+pub struct Effect<'a, Context: MouthContext<'a> + BasicPaletteContext<'a> + ExpressionContext> {
     sweat_geometry: EffectGeometry,
     anger_geometry: EffectGeometry,
     heart_geometry: EffectGeometry,
     chill_geometry: EffectGeometry,
     bubble_geometries: [EffectGeometry; 2],
-    context: PhantomData<Context>,
+    context: PhantomData<&'a Context>,
 }
 
-impl<Context: MouthContext + BasicPaletteContext + ExpressionContext> Effect<Context> {
+impl<'a, Context: MouthContext<'a> + BasicPaletteContext<'a> + ExpressionContext> Effect<'a, Context> {
     pub fn new() -> Self {
         Self {
             sweat_geometry: EffectGeometry { position: Point::new(290, 110), size: 7 },
@@ -291,10 +291,10 @@ impl<Color: PixelColor> DrawableGraphics for DrawableEffect<Color> {
     }
 }
 
-impl<Context: MouthContext + BasicPaletteContext + ExpressionContext> Component for Effect<Context> {
+impl<'a, Context: MouthContext<'a> + BasicPaletteContext<'a> + ExpressionContext> Component<'a> for Effect<'a, Context> {
     type Context = Context;
-    type Drawable = DrawableEffect<Context::Color>;
-    fn render(&self, bounding_rect: embedded_graphics::primitives::Rectangle, context: &Self::Context) -> Self::Drawable {
+    type Drawable = DrawableEffect<<Context as BasicPaletteContext<'a>>::Color>;
+    fn render(&self, bounding_rect: embedded_graphics::primitives::Rectangle, context: &'a Self::Context) -> Self::Drawable {
         let foreground_color = context.get_basic_palette().get_color(&BasicPaletteKey::Primary);
         let offset = context.breath();
         let expression = context.expression();

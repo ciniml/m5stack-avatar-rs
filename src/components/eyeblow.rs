@@ -8,14 +8,14 @@ use crate::{BasicPaletteContext, ExpressionContext, Expression};
 use crate::component::Component;
 use crate::palette::{Palette, BasicPaletteKey};
 
-pub struct Eyeblow<Context: BasicPaletteContext + ExpressionContext> {
+pub struct Eyeblow<'a, Context: BasicPaletteContext<'a> + ExpressionContext> {
     width: u32,
     height: u32,
     is_left: bool,
-    context: PhantomData<Context>,
+    context: PhantomData<&'a Context>,
 }
 
-impl<Context: BasicPaletteContext + ExpressionContext> Eyeblow<Context> {
+impl<'a, Context: BasicPaletteContext<'a> + ExpressionContext> Eyeblow<'a, Context> {
     pub fn new(width: u32, height: u32, is_left: bool) -> Self {
         Self {
             width,
@@ -48,7 +48,7 @@ impl<Color: PixelColor> DrawableGraphics for DrawableEyeblow<Color> {
     }
 }
 
-impl <Context: BasicPaletteContext + ExpressionContext> Component for Eyeblow<Context> {
+impl <'a, Context: BasicPaletteContext<'a> + ExpressionContext> Component<'a> for Eyeblow<'a, Context> {
     type Context = Context;
     type Drawable = DrawableEyeblow<Context::Color>;
     fn render(&self, bounding_rect: Rectangle, context: &Self::Context) -> Self::Drawable {

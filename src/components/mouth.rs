@@ -7,15 +7,15 @@ use crate::{BasicPaletteContext, ExpressionContext};
 use crate::component::Component;
 use crate::palette::{Palette, BasicPaletteKey};
 
-pub struct Mouth<Context: MouthContext> {
+pub struct Mouth<'a, Context: MouthContext<'a>> {
     min_width: u32,
     max_width: u32,
     min_height: u32,
     max_height: u32,
-    context: PhantomData<Context>,
+    context: PhantomData<&'a Context>,
 }
 
-impl<Context: MouthContext> Mouth<Context> {
+impl<'a, Context: MouthContext<'a>> Mouth<'a, Context> {
     pub fn new(min_width: u32, max_width: u32, min_height: u32, max_height: u32) -> Self {
         Self {
             min_width,
@@ -27,7 +27,7 @@ impl<Context: MouthContext> Mouth<Context> {
     }
 }
 
-pub trait MouthContext: BasicPaletteContext + ExpressionContext {
+pub trait MouthContext<'a>: BasicPaletteContext<'a> + ExpressionContext {
     fn open_ratio(&self) -> f32;
     fn set_open_ratio(&mut self, value: f32);
     fn breath(&self) -> f32;
@@ -49,10 +49,10 @@ impl<Color: PixelColor> DrawableGraphics for DrawableMouth<Color> {
     }
 }
 
-impl <Context: MouthContext> Component for Mouth<Context> {
+impl <'a, Context: MouthContext<'a>> Component<'a> for Mouth<'a, Context> {
     type Context = Context;
     type Drawable = DrawableMouth<Context::Color>;
-    fn render(&self, bounding_rect: Rectangle, context: &Self::Context) -> Self::Drawable {
+    fn render(&self, bounding_rect: Rectangle, context: &'a Self::Context) -> Self::Drawable {
         let foreground_color = context.get_basic_palette().get_color(&BasicPaletteKey::Primary);
         let open_ratio = context.open_ratio();
         let breath = context.breath();

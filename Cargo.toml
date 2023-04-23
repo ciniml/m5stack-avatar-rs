@@ -2,8 +2,10 @@
 name = "m5stack-avatar-rs"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+authors = ["Kenta Ida <fuga@fugafuga.org>"]
+repository = "https://github.com/ciniml/m5stack-avatar-rs"
+license = "MIT OR Apache-2.0"
+description = "Rust implementation of M5Stack Avatar"
 
 [dependencies]
 embedded-graphics = "0.7.1"

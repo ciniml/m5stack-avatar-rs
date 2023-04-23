@@ -69,7 +69,7 @@ impl Default for BreathAnimator {
         }
     }
 }
-impl<Context: MouthContext> Animator<Context> for BreathAnimator {
+impl<'a, Context: MouthContext<'a>> Animator<Context> for BreathAnimator {
     fn next(&mut self, counter: FrameCounter, context: &mut Context) -> FrameCounter {
         self.c = (self.c + 1) % 100;
         let f = f32::sin((self.c as f32) * 2.0 * core::f32::consts::PI / 100.0);
@@ -117,7 +117,7 @@ impl Default for BlinkAnimator {
     }
 }
 
-impl<Context: EyeContext + RandomGeneratorContext> Animator<Context> for BlinkAnimator {
+impl<'a, Context: EyeContext<'a> + RandomGeneratorContext> Animator<Context> for BlinkAnimator {
     fn next(&mut self, counter: FrameCounter, context: &mut Context) -> FrameCounter {
         self.is_open = !self.is_open;
         if self.is_open {
@@ -155,7 +155,7 @@ impl FaceAnimator {
     }
 }
 
-impl<Context: FaceContext + RandomGeneratorContext> Animator<Context> for FaceAnimator {
+impl<'a, Context: FaceContext<'a> + RandomGeneratorContext> Animator<Context> for FaceAnimator {
     fn next(&mut self, counter: FrameCounter, context: &mut Context) -> FrameCounter {
         if counter.is_after(&self.breath_counter) {
             self.breath_counter = self.breath.next(counter, context);
