@@ -1,6 +1,6 @@
 use embedded_graphics::{prelude::{PixelColor, DrawTarget}, primitives::Rectangle, Drawable};
 
-use crate::{components::face::{Face, DrawContext}, animation::{AnimationRunner, FaceAnimator}, Component};
+use crate::{components::{face::{Face, DrawContext}, effect::Effect}, animation::{AnimationRunner, FaceAnimator}, Component};
 
 pub trait Timer {
     fn timestamp_milliseconds(&self) -> u64; 
@@ -10,6 +10,7 @@ pub struct Avatar<Color: PixelColor> {
     last_time: Option<u64>,
     frames_per_second: u64,
     face: Face<DrawContext<Color>>,
+    effect: Effect<DrawContext<Color>>,
     runner: AnimationRunner<DrawContext<Color>, FaceAnimator>,
 }
 
@@ -19,6 +20,7 @@ impl<Color: PixelColor> Avatar<Color> {
             last_time: None,
             frames_per_second,
             face: Face::default(),
+            effect: Effect::new(),
             runner: AnimationRunner::new(context, frames_per_second, FaceAnimator::new()),
         }
     }
@@ -33,6 +35,8 @@ impl<Color: PixelColor> Avatar<Color> {
             self.last_time = Some(now);
             self.runner.next();
             self.face.render(Rectangle::zero(), self.runner.context())
+                .draw(draw_target)?;
+            self.effect.render(Rectangle::zero(), self.runner.context())
                 .draw(draw_target)?;
         }
         Ok(())

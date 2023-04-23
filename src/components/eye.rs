@@ -61,7 +61,6 @@ impl<Color: PixelColor> DrawableGraphics for DrawableEye<Color> {
     }
 }
 
-
 impl <Context: EyeContext> Component for Eye<Context> {
     type Context = Context;
     type Drawable = DrawableEye<Context::Color>;

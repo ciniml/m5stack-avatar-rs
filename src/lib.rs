@@ -5,6 +5,7 @@ mod component;
 mod expression;
 mod animation;
 mod avatar;
+mod util;
 
 pub mod components;
 

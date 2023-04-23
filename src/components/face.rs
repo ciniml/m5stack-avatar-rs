@@ -7,6 +7,7 @@ use crate::components::eye::{Eye, EyeContext, GazeContext};
 use crate::components::mouth::{Mouth, MouthContext};
 
 use super::eye::DrawableEye;
+use super::eyeblow::{Eyeblow, DrawableEyeblow};
 use super::mouth::DrawableMouth;
 
 pub trait RandomGeneratorContext {
@@ -108,9 +109,13 @@ pub struct Face<Context: FaceContext> {
     eye_l: Eye<Context>,
     eye_r: Eye<Context>,
     mouth: Mouth<Context>,
+    eyeblow_l: Eyeblow<Context>,
+    eyeblow_r: Eyeblow<Context>,
     pos_eye_l: Rectangle,
     pos_eye_r: Rectangle,
     pos_mouth: Rectangle,
+    pos_eyeblow_l: Rectangle,
+    pos_eyeblow_r: Rectangle,
     bounding_rect: Rectangle,
 }
 
@@ -119,18 +124,26 @@ impl<Context: FaceContext> Face<Context> {
         eye_l: Eye<Context>,
         eye_r: Eye<Context>,
         mouth: Mouth<Context>,
+        eyeblow_l: Eyeblow<Context>,
+        eyeblow_r: Eyeblow<Context>,
         pos_eye_l: Rectangle,
         pos_eye_r: Rectangle,
         pos_mouth: Rectangle,
+        pos_eyeblow_l: Rectangle,
+        pos_eyeblow_r: Rectangle,
         bounding_rect: Rectangle,
     ) -> Self {
         Self {
             eye_l,
             eye_r,
             mouth,
+            eyeblow_l,
+            eyeblow_r,
             pos_eye_l,
             pos_eye_r,
             pos_mouth,
+            pos_eyeblow_l,
+            pos_eyeblow_r,
             bounding_rect,
         }
     }
@@ -142,9 +155,13 @@ impl<Context: FaceContext> Default for Face<Context> {
             eye_l: Eye::new(8.0, false),
             eye_r: Eye::new(8.0, true),
             mouth: Mouth::new(50, 90, 4, 60),
+            eyeblow_l: Eyeblow::new(32, 2, false),
+            eyeblow_r: Eyeblow::new(32, 2, true),
             pos_eye_l: Rectangle::new(Point::new(230, 96), Size::zero()),
             pos_eye_r: Rectangle::new(Point::new(90, 93), Size::zero()),
             pos_mouth: Rectangle::new(Point::new(163, 148), Size::zero()),
+            pos_eyeblow_l: Rectangle::new(Point::new(96, 67), Size::zero()),
+            pos_eyeblow_r: Rectangle::new(Point::new(230, 72), Size::zero()),
             bounding_rect: Rectangle::new(Point::new(0, 0), Size::new(320, 240)),
         }
     }
@@ -154,6 +171,8 @@ pub struct DrawableFace<Color: PixelColor> {
     eye_l: DrawableEye<Color>,
     eye_r: DrawableEye<Color>,
     mouth: DrawableMouth<Color>,
+    eyeblow_l: DrawableEyeblow<Color>,
+    eyeblow_r: DrawableEyeblow<Color>,
 }
 
 
@@ -166,6 +185,8 @@ impl<Color: PixelColor> DrawableGraphics for DrawableFace<Color> {
         self.eye_l.draw(target)?;
         self.eye_r.draw(target)?;
         self.mouth.draw(target)?;
+        self.eyeblow_l.draw(target)?;
+        self.eyeblow_r.draw(target)?;
         Ok(())
     }
 }
@@ -176,27 +197,40 @@ impl <Context: FaceContext> Component for Face<Context> {
     type Drawable = DrawableFace<Context::Color>;
     fn render(&self, bounding_rect: Rectangle, context: &Self::Context) -> Self::Drawable {
         let breath = context.breath();
+        let breath_offset = Point::new(0, (breath * 3.0) as i32);
         let mouth = {
             let mut rect = self.pos_mouth;
-            rect.top_left += Point::new(0, (breath * 3.0) as i32);
+            rect.top_left += breath_offset;
             self.mouth.render(rect, context)
         };
         let eye_l = {
             let mut rect = self.pos_eye_l;
-            rect.top_left += Point::new(0, (breath * 3.0) as i32);
+            rect.top_left += breath_offset;
             self.eye_l.render(rect, context)
         };
         let eye_r = {
             let mut rect = self.pos_eye_r;
-            rect.top_left += Point::new(0, (breath * 3.0) as i32);
+            rect.top_left += breath_offset;
             self.eye_r.render(rect, context)
         };
-
+        let eyeblow_l = {
+            let mut rect = self.pos_eyeblow_l;
+            rect.top_left += breath_offset;
+            self.eyeblow_l.render(rect, context)
+        };
+        let eyeblow_r = {
+            let mut rect = self.pos_eyeblow_r;
+            rect.top_left += breath_offset;
+            self.eyeblow_r.render(rect, context)
+        };
+        
         // TODO: support scaling
         Self::Drawable {
             eye_l,
             eye_r,
             mouth,
+            eyeblow_l,
+            eyeblow_r,
         }
     }
 }
