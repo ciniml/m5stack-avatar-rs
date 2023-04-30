@@ -32,7 +32,7 @@ fn main() -> Result<(), std::convert::Infallible> {
     loop {
         display.clear(BinaryColor::Off)?;
 
-        avatar.context().expression = Expression::Happy;
+        avatar.context().expression = Expression::Doubt;
         avatar.run(&mut display, &timer)?;
         window.update(&display);
 

@@ -1,6 +1,6 @@
 use core::str::FromStr;
 
-use embedded_graphics::{prelude::{PixelColor, DrawTarget}, primitives::Rectangle, Drawable};
+use embedded_graphics::{prelude::{PixelColor, DrawTarget, IntoStorage}, primitives::Rectangle, Drawable};
 
 use crate::{components::{face::{Face, DrawContext}, effect::Effect, balloon::Balloon}, animation::{AnimationRunner, FaceAnimator}, Component};
 
@@ -8,7 +8,7 @@ pub trait Timer {
     fn timestamp_milliseconds(&self) -> u64; 
 }
 
-pub struct Avatar<'a, Color: PixelColor, String: AsRef<str> + FromStr> {
+pub struct Avatar<'a, Color: PixelColor + From<Color::Raw> + Into<Color::Raw>, String: AsRef<str> + FromStr> {
     last_time: Option<u64>,
     frames_per_second: u64,
     face: Face<'a, DrawContext<Color, String>>,
@@ -17,7 +17,7 @@ pub struct Avatar<'a, Color: PixelColor, String: AsRef<str> + FromStr> {
     runner: AnimationRunner<DrawContext<Color, String>, FaceAnimator>,
 }
 
-impl<'a, Color: PixelColor, String: AsRef<str> + FromStr> Avatar<'a, Color, String> {
+impl<'a, Color: PixelColor + From<Color::Raw> + Into<Color::Raw>, String: AsRef<str> + FromStr> Avatar<'a, Color, String> {
     pub fn new(context: DrawContext<Color, String>, frames_per_second: u64) -> Self {
         Self {
             last_time: None,
@@ -49,7 +49,7 @@ impl<'a, Color: PixelColor, String: AsRef<str> + FromStr> Avatar<'a, Color, Stri
     }
 }
 
-impl<'a, Color: PixelColor + Default, String: AsRef<str> + FromStr> Default for Avatar<'a, Color, String> {
+impl<'a, Color: PixelColor + From<Color::Raw> + Into<Color::Raw> + Default, String: AsRef<str> + FromStr> Default for Avatar<'a, Color, String> {
     fn default() -> Self {
         Self::new(Default::default(), 30)
     }

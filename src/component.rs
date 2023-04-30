@@ -1,4 +1,4 @@
-use embedded_graphics::{Drawable as DrawableGraphics, prelude::PixelColor};
+use embedded_graphics::{Drawable as DrawableGraphics, prelude::{PixelColor, IntoStorage}};
 
 use crate::{Palette, BasicPaletteKey};
 
@@ -9,7 +9,7 @@ pub trait Component<'a> {
 }
 
 pub trait BasicPaletteContext<'a> {
-    type Color: PixelColor + 'a;
+    type Color: PixelColor + From<<<Self as BasicPaletteContext<'a>>::Color as PixelColor>::Raw> + Into<<<Self as BasicPaletteContext<'a>>::Color as PixelColor>::Raw> + 'a;
     type BasicPalette: Palette<Key = BasicPaletteKey, Color = Self::Color>;
     fn get_basic_palette(&self) -> &Self::BasicPalette;
 }

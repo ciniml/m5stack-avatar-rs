@@ -1,11 +1,17 @@
 use core::marker::PhantomData;
+#[allow(unused)]
+use micromath::F32Ext as _;
 
-use embedded_graphics::prelude::{PixelColor, Point, Size};
+use embedded_graphics::prelude::{PixelColor, Point, Size, DrawTarget};
 use embedded_graphics::Drawable as DrawableGraphics;
 use embedded_graphics::primitives::{PrimitiveStyle, PrimitiveStyleBuilder, Circle, Rectangle, Primitive, Triangle};
+use crate::sprite::Sprite;
+use crate::util::prepare_sprite_buffer;
 use crate::{BasicPaletteContext, ExpressionContext, Expression};
 use crate::component::Component;
 use crate::palette::{Palette, BasicPaletteKey};
+
+use super::mouth::MouthContext;
 
 pub struct Eye<'a, Context: EyeContext<'a>> {
     radius: f32,
@@ -23,7 +29,7 @@ impl<'a, Context: EyeContext<'a>> Eye<'a, Context> {
     }
 }
 
-pub trait EyeContext<'a>: BasicPaletteContext<'a> +  GazeContext + ExpressionContext {
+pub trait EyeContext<'a>: BasicPaletteContext<'a> +  GazeContext + ExpressionContext + MouthContext<'a> {
     fn open_ratio(&self) -> f32;
     fn set_open_ratio(&mut self, value: f32);
 }
@@ -37,6 +43,8 @@ pub trait GazeContext {
 
 
 pub struct DrawableEye<Color: PixelColor> {
+    bounding_box: Rectangle,
+    background_color: Color,
     style: PrimitiveStyle<Color>,
     mask_style: PrimitiveStyle<Color>,
     open_eye_main: Option<Circle>,
@@ -46,28 +54,35 @@ pub struct DrawableEye<Color: PixelColor> {
     close_eye: Option<Rectangle>,
 }
 
-impl<Color: PixelColor> DrawableGraphics for DrawableEye<Color> {
+impl<Color: PixelColor + Into<Color::Raw> + From<Color::Raw>> DrawableGraphics for DrawableEye<Color> {
     type Color = Color;
     type Output = ();
     fn draw<D>(&self, target: &mut D) -> Result<Self::Output, D::Error>
         where
             D: embedded_graphics::prelude::DrawTarget<Color = Self::Color> {
-        self.open_eye_main.map_or(Ok(()), |p| p.into_styled(self.style.clone()).draw(target))?;
-        self.open_eye_triangle.map_or(Ok(()), |p| p.into_styled(self.mask_style.clone()).draw(target))?;
-        self.open_eye_happy_circle.map_or(Ok(()), |p| p.into_styled(self.mask_style.clone()).draw(target))?;
-        self.open_eye_half_mask.map_or(Ok(()), |p| p.into_styled(self.mask_style.clone()).draw(target))?;
-        self.close_eye.map_or(Ok(()), |p| p.into_styled(self.style.clone()).draw(target))?;
+        let mut buffer = prepare_sprite_buffer::<Color>(self.bounding_box);
+        let mut sprite = Sprite::<Color>::new_unaligned(&mut buffer, self.bounding_box).unwrap();
+        sprite.clear(self.background_color).ok();
+        self.open_eye_main.map_or(Ok(()), |p| p.into_styled(self.style.clone()).draw(&mut sprite)).ok();
+        self.open_eye_triangle.map_or(Ok(()), |p| p.into_styled(self.mask_style.clone()).draw(&mut sprite)).ok();
+        self.open_eye_happy_circle.map_or(Ok(()), |p| p.into_styled(self.mask_style.clone()).draw(&mut sprite)).ok();
+        self.open_eye_half_mask.map_or(Ok(()), |p| p.into_styled(self.mask_style.clone()).draw(&mut sprite)).ok();
+        self.close_eye.map_or(Ok(()), |p| p.into_styled(self.style.clone()).draw(&mut sprite)).ok();
+        sprite.draw(target)?;
         Ok(())
     }
 }
 
-impl <'a, Context: EyeContext<'a>> Component<'a> for Eye<'a, Context> {
+impl <'a, Context: EyeContext<'a>> Component<'a> for Eye<'a, Context> 
+    where Context::Color: From<<Context::Color as PixelColor>::Raw> + Into<<Context::Color as PixelColor>::Raw> 
+{
     type Context = Context;
     type Drawable = DrawableEye<Context::Color>;
     fn render(&self, bounding_rect: Rectangle, context: &'a Self::Context) -> Self::Drawable {
         let foreground_color = context.get_basic_palette().get_color(&BasicPaletteKey::Primary);
         let background_color = context.get_basic_palette().get_color(&BasicPaletteKey::Background);
-        let open_ratio = context.open_ratio();
+        let open_ratio = EyeContext::open_ratio(context);
+        let breath_offset = context.breath();
         let style = PrimitiveStyleBuilder::new()
             .stroke_color(foreground_color)
             .stroke_width(1)
@@ -79,8 +94,12 @@ impl <'a, Context: EyeContext<'a>> Component<'a> for Eye<'a, Context> {
             .fill_color(background_color)
             .build();
         let center = bounding_rect.center();
-        let x = center.x as f32;
-        let y = center.y as f32;
+        let x = center.x as f32 + breath_offset * 3.0;
+        let y = center.y as f32 + breath_offset * 3.0;
+        let bounding_box = Rectangle::new(
+            center - Point::new(self.radius.ceil() as i32 + 3 + 3, self.radius.ceil() as i32 + 3 + 3),
+            Size::new((self.radius * 2.0 + 12.0).ceil() as u32, (self.radius * 2.0 + 12.0).ceil() as u32),
+        );
         let offset_x = context.horizontal() * 3.0;
         let offset_y = context.vertical() * 3.0;
         let expression = context.expression();
@@ -96,6 +115,8 @@ impl <'a, Context: EyeContext<'a>> Component<'a> for Eye<'a, Context> {
                     let y2 = y0 + self.radius;
                     let triangle = Triangle::new(Point::new(x0 as i32, y0 as i32), Point::new(x1 as i32, y1 as i32), Point::new(x2 as i32, y2 as i32));
                     Self::Drawable {
+                        bounding_box,
+                        background_color,
                         style,
                         mask_style,
                         open_eye_main: Some(body),
@@ -121,6 +142,8 @@ impl <'a, Context: EyeContext<'a>> Component<'a> for Eye<'a, Context> {
                         Size::new(w as u32, h as u32)
                     ));
                     Self::Drawable {
+                        bounding_box,
+                        background_color,
                         style,
                         mask_style,
                         open_eye_main: Some(body),
@@ -132,6 +155,8 @@ impl <'a, Context: EyeContext<'a>> Component<'a> for Eye<'a, Context> {
                 },
                 _ => {
                     Self::Drawable {
+                        bounding_box,
+                        background_color,
                         style,
                         mask_style,
                         open_eye_main: Some(body),
@@ -149,6 +174,8 @@ impl <'a, Context: EyeContext<'a>> Component<'a> for Eye<'a, Context> {
             let h = 4.0f32;
             let close_eye = Some(Rectangle::new(Point::new(x1 as i32, y1 as i32), Size::new(w as u32, h as u32)));
             Self::Drawable {
+                bounding_box,
+                background_color,
                 style,
                 mask_style,
                 open_eye_main: None,

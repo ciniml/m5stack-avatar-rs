@@ -1,6 +1,6 @@
 use core::str::FromStr;
 
-use embedded_graphics::prelude::{PixelColor, Size, Point, Drawable as DrawableGraphics};
+use embedded_graphics::prelude::{PixelColor, Size, Point, Drawable as DrawableGraphics, IntoStorage};
 use embedded_graphics::primitives::Rectangle;
 use rand_core::SeedableRng;
 
@@ -53,7 +53,7 @@ impl<Color: PixelColor, String> RandomGeneratorContext for DrawContext<Color, St
     }
 }
 
-impl<'a, Color: PixelColor + 'a, String> BasicPaletteContext<'a> for DrawContext<Color, String> {
+impl<'a, Color: PixelColor + From<Color::Raw> + Into<Color::Raw> + 'a, String> BasicPaletteContext<'a> for DrawContext<Color, String> {
     type BasicPalette = ArrayPalette<BasicPaletteKey, Color, {BasicPaletteKey::VARIANT_COUNT}>;
     type Color = Color;
     fn get_basic_palette(&self) -> &Self::BasicPalette {
@@ -82,7 +82,7 @@ impl<Color: PixelColor, String> GazeContext for DrawContext<Color, String> {
     }
 }
 
-impl<'a, Color: PixelColor + 'a, String> EyeContext<'a> for DrawContext<Color, String> {
+impl<'a, Color: PixelColor + From<Color::Raw> + Into<Color::Raw> + 'a, String> EyeContext<'a> for DrawContext<Color, String> {
     fn open_ratio(&self) -> f32 {
         self.eye_open_ratio
     }
@@ -91,7 +91,7 @@ impl<'a, Color: PixelColor + 'a, String> EyeContext<'a> for DrawContext<Color, S
     }
 }
 
-impl<'a, Color: PixelColor + 'a, String> MouthContext<'a> for DrawContext<Color, String> {
+impl<'a, Color: PixelColor + From<Color::Raw> + Into<Color::Raw> + 'a, String> MouthContext<'a> for DrawContext<Color, String> {
     fn open_ratio(&self) -> f32 {
         self.mouth_open_ratio
     }
@@ -106,9 +106,9 @@ impl<'a, Color: PixelColor + 'a, String> MouthContext<'a> for DrawContext<Color,
     }
 }
 
-impl<'a, Color: PixelColor + 'a, String> FaceContext<'a> for DrawContext<Color, String> {}
+impl<'a, Color: PixelColor + From<Color::Raw> + Into<Color::Raw> + 'a, String> FaceContext<'a> for DrawContext<Color, String> {}
 
-impl<'a, Color: PixelColor + 'a, String: AsRef<str> + FromStr> BalloonContext<'a> for DrawContext<Color, String> {
+impl<'a, Color: PixelColor + From<Color::Raw> + Into<Color::Raw> + 'a, String: AsRef<str> + FromStr> BalloonContext<'a> for DrawContext<Color, String> {
     fn text(&self) -> Option<&str> {
         self.text.as_ref().map(|string| string.as_ref())
     }
@@ -190,7 +190,7 @@ pub struct DrawableFace<Color: PixelColor> {
 }
 
 
-impl<Color: PixelColor> DrawableGraphics for DrawableFace<Color> {
+impl<Color: PixelColor + Into<Color::Raw> + From<Color::Raw>> DrawableGraphics for DrawableFace<Color> {
     type Color = Color;
     type Output = ();
     fn draw<D>(&self, target: &mut D) -> Result<Self::Output, D::Error>
@@ -210,32 +210,20 @@ impl <'a, Context: FaceContext<'a>> Component<'a> for Face<'a, Context> {
     type Context = Context;
     type Drawable = DrawableFace<<Context as BasicPaletteContext<'a>>::Color>;
     fn render(&self, bounding_rect: Rectangle, context: &'a Self::Context) -> Self::Drawable {
-        let breath = context.breath();
-        let breath_offset = Point::new(0, (breath * 3.0) as i32);
         let mouth = {
-            let mut rect = self.pos_mouth;
-            rect.top_left += breath_offset;
-            self.mouth.render(rect, context)
+            self.mouth.render(self.pos_mouth, context)
         };
         let eye_l = {
-            let mut rect = self.pos_eye_l;
-            rect.top_left += breath_offset;
-            self.eye_l.render(rect, context)
+            self.eye_l.render(self.pos_eye_l, context)
         };
         let eye_r = {
-            let mut rect = self.pos_eye_r;
-            rect.top_left += breath_offset;
-            self.eye_r.render(rect, context)
+            self.eye_r.render(self.pos_eye_r, context)
         };
         let eyeblow_l = {
-            let mut rect = self.pos_eyeblow_l;
-            rect.top_left += breath_offset;
-            self.eyeblow_l.render(rect, context)
+            self.eyeblow_l.render(self.pos_eyeblow_l, context)
         };
         let eyeblow_r = {
-            let mut rect = self.pos_eyeblow_r;
-            rect.top_left += breath_offset;
-            self.eyeblow_r.render(rect, context)
+            self.eyeblow_r.render(self.pos_eyeblow_r, context)
         };
         
         // TODO: support scaling

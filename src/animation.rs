@@ -1,6 +1,7 @@
 use core::{marker::PhantomData, fmt::Debug};
 use rand_core::{SeedableRng, RngCore};
-
+#[allow(unused)]
+use micromath::F32Ext as _;
 use crate::components::{face::{DrawContext, FaceContext, RandomGeneratorContext}, mouth::MouthContext, eye::{GazeContext, EyeContext}};
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -122,11 +123,11 @@ impl<'a, Context: EyeContext<'a> + RandomGeneratorContext> Animator<Context> for
         self.is_open = !self.is_open;
         if self.is_open {
             // open
-            context.set_open_ratio(1.0);
+            EyeContext::set_open_ratio(context, 1.0);
             counter.after_milliseconds(2500 + 100 * rand_u32_nonuniform(context.rng(), 0, 20) as u64)
         } else {
             // close
-            context.set_open_ratio(0.0);
+            EyeContext::set_open_ratio(context, 0.0);
             counter.after_milliseconds(300 + 10 * rand_u32_nonuniform(context.rng(), 0, 20) as u64)
         }
     }

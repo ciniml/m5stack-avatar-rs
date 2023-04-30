@@ -10,7 +10,8 @@ description = "Rust implementation of M5Stack Avatar"
 [dependencies]
 embedded-graphics = "0.7.1"
 embedded-graphics-simulator = { version = "0.4.1", optional = true }
-num_enum = "0.6.0"
+micromath = "2.0.0"
+num_enum = { version = "0.6.0", default-features = false, features = [] }
 rand_core = "0.6.4"
 rand_xorshift = "0.3.0"
 variant_count = "1.1.0"
