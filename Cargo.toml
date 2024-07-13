@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 description = "Rust implementation of M5Stack Avatar"
 
 [dependencies]
-embedded-graphics = "0.7.1"
+embedded-graphics = "0.8.1"
 embedded-graphics-simulator = { version = "0.4.1", optional = true }
 micromath = "2.0.0"
 num_enum = { version = "0.6.0", default-features = false, features = [] }
