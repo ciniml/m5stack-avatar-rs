@@ -1,4 +1,5 @@
 use core::marker::PhantomData;
+use micromath::F32Ext;
 #[allow(unused)]
 use micromath::F32Ext as _;
 
@@ -84,16 +85,21 @@ impl<Color: PixelColor> DrawableSweatMark<Color> {
         let x = geometry.position.x;
         let y = geometry.position.y;
         let r = geometry.size;
-        let y = y + (offset * 5.0).floor() as i32;
+        let y = y + (offset * 5.0).round() as i32;
         let r = r as f32 + ((r as f32) * 0.2 * (offset as f32)).floor();
         let a = 1.7320508 * r / 2.0;
+
+        let left = (x as f32 - r).floor() as i32;
+        let right = (x as f32 + r).ceil() as i32;
+        let round_top = (y as f32 - r).floor() as i32;
+        let diameter = right - left + 1;
         Self {
             style,
-            circle: Circle::new(make_point_f32_rounded(x as f32 - r, y as f32 - r), (r * 2.0).round() as u32),
+            circle: Circle::new(Point::new(left, round_top), diameter as u32),
             triangle: Triangle::new(
                 make_point_f32_rounded(x as f32, y as f32 - r * 2.0),
-                make_point_f32_rounded(x as f32 - a, y as f32 - r * 0.5),
-                make_point_f32_rounded(x as f32 + a, y as f32 - r * 0.5),
+                make_point_f32_rounded((x as f32 - a).floor(), y as f32 - r * 0.5),
+                make_point_f32_rounded((x as f32 + a).ceil(), y as f32 - r * 0.5),
             ),
         }
     }
@@ -102,7 +108,7 @@ impl<Color: PixelColor> DrawableSweatMark<Color> {
         let y = geometry.position.y as f32;
         let r = geometry.size as f32;
         let r = (r + r * 0.2).floor();
-        let a = 1.7320508 * r / 2.0;
+        let _a = 1.7320508 * r / 2.0;
 
         let left = x - r;
         let top = y;
@@ -206,16 +212,18 @@ impl<Color: PixelColor> DrawableAngerMark<Color> {
             .fill_color(color)
             .build();
         
+        let x = geometry.position.x;
+        let y = geometry.position.y;
         let r = geometry.size;
-        let r = r as f32 + (r as f32 * 0.4 * offset);
-        let x = geometry.position.x as f32;
-        let y = geometry.position.y as f32;
+        let r_one_third = ((r as f32 + (r as f32 * 0.4 * offset)) / 3.0).round() as i32;
+        let r = r_one_third * 3;
+
         Self {
             style,
-            rect0: Rectangle::new(make_point_f32_rounded(x - r / 3.0, y - r), make_size_f32_rounded(r * 2.0 / 3.0, r * 2.0)),
-            rect1: Rectangle::new(make_point_f32_rounded(x - r, y - r / 3.0), make_size_f32_rounded(r * 2.0, r * 2.0 / 3.0)),
-            rect2: Rectangle::new(make_point_f32_rounded(x - r / 3.0 + 2.0, y - r), make_size_f32_rounded(r * 2.0 / 3.0 - 4.0, r * 2.0)),
-            rect3: Rectangle::new(make_point_f32_rounded(x - r, y - r / 3.0 + 2.0), make_size_f32_rounded(r * 2.0 / 3.0, r * 2.0 / 3.0 - 4.0)),
+            rect0: Rectangle::new(Point::new(x - r_one_third, y - r), Size::new((r * 2 / 3) as u32, (r * 2) as u32)),
+            rect1: Rectangle::new(Point::new(x - r, y - r_one_third), Size::new((r * 2) as u32, (r * 2 / 3) as u32)),
+            rect2: Rectangle::new(Point::new(x - r_one_third + 2, y - r), Size::new((r * 2 / 3 - 4) as u32, (r * 2) as u32)),
+            rect3: Rectangle::new(Point::new(x - r, y - r_one_third + 2), Size::new((r * 2 / 3) as u32, (r * 2 / 3 - 4) as u32)),
         }
     }
     pub fn bounding_box(geometry: &EffectGeometry) -> Rectangle {
@@ -371,15 +379,15 @@ impl<Color: PixelColor + Into<Color::Raw> + From<Color::Raw>> DrawableGraphics f
         
         let mut buffer = prepare_sprite_buffer::<Color>(self.bounding_box);
         let mut sprite = Sprite::<Color>::new_unaligned(&mut buffer, self.bounding_box).unwrap();
-        sprite.clear(self.background_color);
+        sprite.clear(self.background_color).ok();
         match &self.mark {
-            Some(DrawableEffectMark::Sweat(mark)) => { mark.draw(&mut sprite); },
-            Some(DrawableEffectMark::Anger(mark)) => { mark.draw(&mut sprite); },
-            Some(DrawableEffectMark::Heart(mark)) => { mark.draw(&mut sprite); },
-            Some(DrawableEffectMark::Chill(mark)) => { mark.draw(&mut sprite); },
+            Some(DrawableEffectMark::Sweat(mark)) => { mark.draw(&mut sprite).ok(); },
+            Some(DrawableEffectMark::Anger(mark)) => { mark.draw(&mut sprite).ok(); },
+            Some(DrawableEffectMark::Heart(mark)) => { mark.draw(&mut sprite).ok(); },
+            Some(DrawableEffectMark::Chill(mark)) => { mark.draw(&mut sprite).ok(); },
             Some(DrawableEffectMark::Bubbles((mark0, mark1))) => {
-                mark0.draw(&mut sprite);
-                mark1.draw(&mut sprite);
+                mark0.draw(&mut sprite).ok();
+                mark1.draw(&mut sprite).ok();
             },
             None => {},
         }
@@ -393,7 +401,7 @@ impl<'a, Context: MouthContext<'a> + BasicPaletteContext<'a> + ExpressionContext
 {
     type Context = Context;
     type Drawable = DrawableEffect<<Context as BasicPaletteContext<'a>>::Color>;
-    fn render(&self, bounding_rect: embedded_graphics::primitives::Rectangle, context: &'a Self::Context) -> Self::Drawable {
+    fn render(&self, _bounding_rect: embedded_graphics::primitives::Rectangle, context: &'a Self::Context) -> Self::Drawable {
         let foreground_color = context.get_basic_palette().get_color(&BasicPaletteKey::Primary);
         let background_color = context.get_basic_palette().get_color(&BasicPaletteKey::Background);
         
