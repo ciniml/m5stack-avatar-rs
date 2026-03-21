@@ -71,12 +71,15 @@ impl <'a, Context: BasicPaletteContext<'a> + ExpressionContext + MouthContext<'a
             .fill_color(foreground_color)
             .build();
         
-        let breath_offset = context.breath() * 3.0;
+        let offset_scale = self.width as f32 / 32.0;
+        let breath_offset = context.breath() * 3.0 * offset_scale;
         let center = bounding_rect.center();
 
+        let h_margin = (self.width / 2) as i32 + ((3.0 + 3.0) * offset_scale) as i32;
+        let v_margin = (self.height / 2) as i32 + ((3.0 + 5.0) * offset_scale) as i32;
         let bounding_box = Rectangle::new(
-            center - Point::new((self.width / 2) as i32 + 3 + 3, (self.height / 2) as i32 + 3 + 5),
-            Size::new(self.width + (3 + 3) * 2, self.height + (3 + 5) * 2, ),
+            center - Point::new(h_margin, v_margin),
+            Size::new(self.width % 2 + 2 * h_margin as u32, self.height % 2 + 2 * v_margin as u32),
         );
 
         let x = center.x as f32 + breath_offset;
@@ -87,8 +90,8 @@ impl <'a, Context: BasicPaletteContext<'a> + ExpressionContext + MouthContext<'a
         match expression {
             Expression::Angry | Expression::Sad => {
                 let aspect = if self.is_left ^ (expression == Expression::Sad) { -1.0 } else { 1.0 };
-                let dx = aspect * 3.0;
-                let dy = aspect * 5.0;
+                let dx = aspect * 3.0 * offset_scale;
+                let dy = aspect * 5.0 * offset_scale;
                 let x1 = x - width / 2.0;
                 let x2 = x1 - dx;
                 let x4 = x + width / 2.0;
@@ -117,7 +120,7 @@ impl <'a, Context: BasicPaletteContext<'a> + ExpressionContext + MouthContext<'a
             },
             _ => {
                 let x1 = x - width / 2.0;
-                let y1 = if expression == Expression::Happy { y - height / 2.0 - 5.0 } else { y - height / 2.0 };
+                let y1 = if expression == Expression::Happy { y - height / 2.0 - 5.0 * offset_scale } else { y - height / 2.0 };
                 let rect = Rectangle::new(make_point_f32_rounded(x1, y1), Size::new(self.width, self.height));
                 Self::Drawable {
                     bounding_box,

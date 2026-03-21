@@ -163,6 +163,24 @@ impl<'a, Context: FaceContext<'a>> Face<'a, Context> {
     }
 }
 
+impl<'a, Context: FaceContext<'a>> Face<'a, Context> {
+    pub fn new_128x128() -> Self {
+        Self {
+            eye_l: Eye::new(3.0, false),
+            eye_r: Eye::new(3.0, true),
+            mouth: Mouth::new(20, 36, 2, 24),
+            eyeblow_l: Eyeblow::new(13, 1, false),
+            eyeblow_r: Eyeblow::new(13, 1, true),
+            pos_eye_l: Rectangle::new(Point::new(92, 54), Size::zero()),
+            pos_eye_r: Rectangle::new(Point::new(36, 53), Size::zero()),
+            pos_mouth: Rectangle::new(Point::new(65, 75), Size::zero()),
+            pos_eyeblow_l: Rectangle::new(Point::new(38, 43), Size::zero()),
+            pos_eyeblow_r: Rectangle::new(Point::new(92, 45), Size::zero()),
+            bounding_rect: Rectangle::new(Point::new(0, 0), Size::new(128, 128)),
+        }
+    }
+}
+
 impl<'a, Context: FaceContext<'a>> Default for Face<'a, Context> {
     fn default() -> Self {
         Self {
@@ -196,11 +214,11 @@ impl<Color: PixelColor + Into<Color::Raw> + From<Color::Raw>> DrawableGraphics f
     fn draw<D>(&self, target: &mut D) -> Result<Self::Output, D::Error>
         where
             D: embedded_graphics::prelude::DrawTarget<Color = Self::Color> {
-        self.eye_l.draw(target)?;
-        self.eye_r.draw(target)?;
         self.mouth.draw(target)?;
         self.eyeblow_l.draw(target)?;
         self.eyeblow_r.draw(target)?;
+        self.eye_l.draw(target)?;
+        self.eye_r.draw(target)?;
         Ok(())
     }
 }

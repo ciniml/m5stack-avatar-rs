@@ -15,6 +15,7 @@ pub struct Avatar<'a, Color: PixelColor + From<Color::Raw> + Into<Color::Raw>, S
     effect: Effect<'a, DrawContext<Color, String>>,
     balloon: Balloon<'a, DrawContext<Color, String>>,
     runner: AnimationRunner<DrawContext<Color, String>, FaceAnimator>,
+    face_only: bool,
 }
 
 impl<'a, Color: PixelColor + From<Color::Raw> + Into<Color::Raw>, String: AsRef<str> + FromStr> Avatar<'a, Color, String> {
@@ -26,6 +27,18 @@ impl<'a, Color: PixelColor + From<Color::Raw> + Into<Color::Raw>, String: AsRef<
             effect: Effect::new(),
             balloon: Balloon::new(),
             runner: AnimationRunner::new(context, frames_per_second, FaceAnimator::new()),
+            face_only: false,
+        }
+    }
+    pub fn new_small(context: DrawContext<Color, String>, frames_per_second: u64) -> Self {
+        Self {
+            last_time: None,
+            frames_per_second,
+            face: Face::new_128x128(),
+            effect: Effect::new(),
+            balloon: Balloon::new(),
+            runner: AnimationRunner::new(context, frames_per_second, FaceAnimator::new()),
+            face_only: true,
         }
     }
     pub fn context(&mut self) -> &mut DrawContext<Color, String> {
@@ -40,10 +53,12 @@ impl<'a, Color: PixelColor + From<Color::Raw> + Into<Color::Raw>, String: AsRef<
             self.runner.next();
             self.face.render(Rectangle::zero(), self.runner.context())
                 .draw(draw_target)?;
-            self.effect.render(Rectangle::zero(), self.runner.context())
-                .draw(draw_target)?;
-            self.balloon.render(Rectangle::zero(), self.runner.context())
-                .draw(draw_target)?;
+            if !self.face_only {
+                self.effect.render(Rectangle::zero(), self.runner.context())
+                    .draw(draw_target)?;
+                self.balloon.render(Rectangle::zero(), self.runner.context())
+                    .draw(draw_target)?;
+            }
         }
         Ok(())
     }

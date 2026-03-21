@@ -23,3 +23,11 @@ std = ["embedded-graphics-simulator"]
 [[example]]
 name = "mock"
 required-features = ["std"]
+
+[[example]]
+name = "mock_small"
+required-features = ["std"]
+
+[[example]]
+name = "dump"
+required-features = ["std"]
