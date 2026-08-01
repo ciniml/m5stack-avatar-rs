@@ -10,6 +10,7 @@ mod util;
 mod sprite;
 
 pub mod components;
+pub mod stackchan;
 
 pub use palette::*;
 pub use component::*;
