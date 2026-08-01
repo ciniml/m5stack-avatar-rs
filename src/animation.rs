@@ -97,10 +97,12 @@ impl Default for SaccadeAnimator {
 
 impl<Context: GazeContext + RandomGeneratorContext> Animator<Context> for SaccadeAnimator {
     fn next(&mut self, counter: FrameCounter, context: &mut Context) -> FrameCounter {
-        let vertical = rand_f32_range(context.rng(), -1.0, 1.0);
-        let horizontal = rand_f32_range(context.rng(), -1.0, 1.0);
-        context.set_horizontal(horizontal);
-        context.set_vertical(vertical);
+        if !context.gaze_override() {
+            let vertical = rand_f32_range(context.rng(), -1.0, 1.0);
+            let horizontal = rand_f32_range(context.rng(), -1.0, 1.0);
+            context.set_horizontal(horizontal);
+            context.set_vertical(vertical);
+        }
         counter.after_milliseconds(500 + 100 * rand_u32_nonuniform(context.rng(), 0, 20) as u64)
     }
 }

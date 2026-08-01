@@ -39,6 +39,11 @@ pub trait GazeContext {
     fn set_horizontal(&mut self, value: f32);
     fn vertical(&self) -> f32;
     fn set_vertical(&mut self, value: f32);
+    /// When `true`, the built-in saccade animator leaves the gaze untouched so an
+    /// external controller (e.g. touch tracking) can drive it directly.
+    fn gaze_override(&self) -> bool {
+        false
+    }
 }
 
 

@@ -23,6 +23,9 @@ pub struct DrawContext<Color: PixelColor, String> {
     pub breath: f32,
     pub gaze_horizontal: f32,
     pub gaze_vertical: f32,
+    /// Suppresses the saccade animator so `gaze_horizontal` / `gaze_vertical` can be
+    /// driven externally (see [`crate::components::eye::GazeContext::gaze_override`]).
+    pub gaze_override: bool,
     pub eye_open_ratio: f32,
     pub mouth_open_ratio: f32,
     pub palette: ArrayPalette<BasicPaletteKey, Color, {BasicPaletteKey::VARIANT_COUNT}>,
@@ -37,6 +40,7 @@ impl<Color: PixelColor + Default, String> Default for DrawContext<Color, String>
             breath: 0.0,
             gaze_horizontal: 0.0,
             gaze_vertical: 0.0,
+            gaze_override: false,
             eye_open_ratio: 1.0,
             mouth_open_ratio: 0.0,
             palette: ArrayPalette::default(),
@@ -79,6 +83,9 @@ impl<Color: PixelColor, String> GazeContext for DrawContext<Color, String> {
     }
     fn set_vertical(&mut self, value: f32) {
         self.gaze_vertical = value;
+    }
+    fn gaze_override(&self) -> bool {
+        self.gaze_override
     }
 }
 
