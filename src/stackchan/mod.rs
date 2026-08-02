@@ -39,7 +39,9 @@ use crate::sprite::Sprite;
 pub use vm::{Bytecode, Vm, VmError};
 
 /// The default face, compiled from stackchan-idf's `assets/default_face.avdsl`
-/// (bit-identical to the bytecode the C++ firmware embeds).
+/// (with the effect-group draw-order fix: the effect box overlaps the right eye /
+/// eyebrow groups, so it is painted first and repainted over — clearing it last wiped
+/// their right edge every frame, which flickered).
 pub const DEFAULT_FACE_AVBC: &[u8] = include_bytes!("default_face.avbc");
 
 /// Colour bounds shared by everything in this module: an RGB565-compatible colour
@@ -321,8 +323,26 @@ pub struct StackchanAvatar<Color> {
     bytecode: Bytecode,
     last_vm_error: Option<VmError>,
     scratch: Vec<u8>,
+    ops: Vec<BlitOp>,
     full_repaint_pending: bool,
 }
+
+/// One recorded group blit: `rect` on the canvas, pixels at `scratch[start..start+len]`
+/// (RGB565, native-endian byte pairs, row-major).
+#[derive(Clone, Copy, Debug)]
+struct BlitOp {
+    rect: Rectangle,
+    start: usize,
+    len: usize,
+}
+
+/// Cap for the per-frame recording arena (hostile bytecode could otherwise OOM the
+/// heap with giant groups). The default face peaks around 55 KiB at 320x240.
+const ARENA_CAP: usize = 96 * 1024;
+/// Reserved up-front at construction so the arena never reallocates at runtime —
+/// growing it later can fail on a fragmented heap even with plenty of total free
+/// memory (observed with the Wi-Fi stack's long-lived allocations interleaved).
+const ARENA_RESERVE: usize = 64 * 1024;
 
 impl<Color: VmColor> StackchanAvatar<Color> {
     pub fn new() -> Self {
@@ -334,7 +354,8 @@ impl<Color: VmColor> StackchanAvatar<Color> {
             // The embedded default is validated by the DSL compiler at build time.
             bytecode: vm::decode(DEFAULT_FACE_AVBC).unwrap(),
             last_vm_error: None,
-            scratch: Vec::new(),
+            scratch: Vec::with_capacity(ARENA_RESERVE),
+            ops: Vec::new(),
             full_repaint_pending: true,
         }
     }
@@ -475,9 +496,159 @@ impl<Color: VmColor> StackchanAvatar<Color> {
     }
 }
 
+/// Asynchronous display backend for [`StackchanAvatar::tick_async`]: a panel that can
+/// fill and blit rectangles with DMA while the CPU yields. Colours are raw RGB565;
+/// `pixels` are native-endian byte pairs, row-major (an RGB565 sprite buffer).
+#[allow(async_fn_in_trait)]
+pub trait AsyncDisplay {
+    type Error;
+    /// (width, height) in pixels.
+    fn dimensions(&self) -> (i32, i32);
+    async fn fill_rect(&mut self, x: i32, y: i32, w: u32, h: u32, color: u16)
+    -> Result<(), Self::Error>;
+    async fn blit(&mut self, x: i32, y: i32, w: u32, h: u32, pixels: &[u8])
+    -> Result<(), Self::Error>;
+}
+
+impl<Color: VmColor> StackchanAvatar<Color> {
+    /// Async variant of [`Self::tick`]: the frame is composed into RAM first (VM run
+    /// recording group blits into an arena), then transferred with the async display —
+    /// with a DMA-backed [`AsyncDisplay`], the executor keeps running other tasks
+    /// during the panel transfers.
+    pub async fn tick_async<D>(&mut self, now_ms: u32, display: &mut D) -> Result<(), D::Error>
+    where
+        D: AsyncDisplay,
+    {
+        self.animator.tick(now_ms, &mut self.context);
+        self.context.now_ms = now_ms;
+
+        let (canvas_w, canvas_h) = display.dimensions();
+        let bg565 = Into::<RawU16>::into(self.context.palette.background).into_inner();
+
+        if self.full_repaint_pending {
+            display
+                .fill_rect(0, 0, canvas_w as u32, canvas_h as u32, bg565)
+                .await?;
+            self.full_repaint_pending = false;
+        }
+
+        // Compose the face into the arena (pure CPU/RAM work).
+        self.scratch.clear();
+        self.ops.clear();
+        let mut recorder = RecordingCanvas {
+            arena: &mut self.scratch,
+            ops: &mut self.ops,
+            ctx: &self.context,
+            tuning: &self.tuning,
+            canvas_w,
+            canvas_h,
+            group: None,
+        };
+        match self.vm.run(&self.bytecode, &mut recorder) {
+            Ok(()) => self.last_vm_error = None,
+            Err(e) => self.last_vm_error = Some(e),
+        }
+
+        // Pre-merge overlapping groups: copy each later group's pixels into every
+        // earlier group it overlaps. Every panel pixel is then written with its final
+        // content by the FIRST blit that touches it, so the brief erased state between
+        // two overlapping blits (e.g. the effect box clearing the right eyebrow's edge
+        // before the eyebrow repaints) can no longer flash on screen.
+        merge_overlapping_ops(&mut self.scratch, &self.ops);
+
+        // Transfer the face. The CPU is free during each DMA chunk.
+        for op in self.ops.iter() {
+            display
+                .blit(
+                    op.rect.top_left.x,
+                    op.rect.top_left.y,
+                    op.rect.size.width,
+                    op.rect.size.height,
+                    &self.scratch[op.start..op.start + op.len],
+                )
+                .await?;
+        }
+
+        // Balloon in a second pass, reusing the arena — composing it alongside the
+        // face would add its full panel strip (~25 KiB) to the peak heap use.
+        self.scratch.clear();
+        self.ops.clear();
+        let balloon_done = compose_balloon_op(
+            &mut self.scratch,
+            &mut self.ops,
+            &self.context,
+            canvas_w,
+            canvas_h,
+        );
+        for op in self.ops.iter() {
+            display
+                .blit(
+                    op.rect.top_left.x,
+                    op.rect.top_left.y,
+                    op.rect.size.width,
+                    op.rect.size.height,
+                    &self.scratch[op.start..op.start + op.len],
+                )
+                .await?;
+        }
+
+        if balloon_done {
+            self.context.balloon_done = true;
+        }
+        Ok(())
+    }
+}
+
 impl<Color: VmColor> Default for StackchanAvatar<Color> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+
+/// Context-variable read shared by the VM canvas backends (`Var` ids, opcodes.hpp).
+fn read_context_var<Color: VmColor>(
+    ctx: &DrawContext<Color>,
+    t: &FaceTuning,
+    canvas_w: i32,
+    canvas_h: i32,
+    id: u8,
+    scale: f32,
+) -> f32 {
+    let c565 = |c: Color| -> f32 { Into::<RawU16>::into(c).into_inner() as f32 };
+    match id {
+        0x00 => canvas_w as f32,                          // CanvasW
+        0x01 => canvas_h as f32,                          // CanvasH
+        0x02 => scale,                                    // CanvasScale
+        0x03 => ctx.now_ms as f32,                        // NowMs
+        0x04 => ctx.breath,                               // Breath
+        0x05 => ctx.eye_open_ratio,                       // EyeOpen
+        0x06 => ctx.gaze_horizontal + ctx.gaze_saccade_h, // GazeH
+        0x07 => ctx.gaze_vertical + ctx.gaze_saccade_v,   // GazeV
+        0x08 => ctx.mouth_open_ratio,                     // MouthOpen
+        0x09 => expression_to_f(ctx.expression),          // Expr
+        0x0A => c565(ctx.palette.primary),
+        0x0B => c565(ctx.palette.background),
+        0x0C => c565(ctx.palette.secondary),
+        0x0D => c565(ctx.palette.balloon_foreground),
+        0x0E => c565(ctx.palette.balloon_background),
+        0x0F => t.eye_radius,
+        0x10 => t.eye_off_x,
+        0x11 => t.eye_off_y,
+        0x12 => t.brow_off_x,
+        0x13 => t.brow_off_y,
+        0x14 => t.mouth_off_x,
+        0x15 => t.mouth_off_y,
+        0x16 => t.mouth_min_w as f32,
+        0x17 => t.mouth_max_w as f32,
+        0x18 => t.mouth_min_h as f32,
+        0x19 => t.mouth_max_h as f32,
+        0x1A => t.eyebrows_visible as u8 as f32,
+        0x1B => t.cheeks_visible as u8 as f32,
+        0x1C => t.cheek_radius,
+        0x1D => t.cheek_off_x,
+        0x1E => t.cheek_off_y,
+        _ => 0.0,
     }
 }
 
@@ -628,68 +799,34 @@ where
     }
 
     fn read_var(&self, id: u8, scale: f32) -> f32 {
-        let ctx = self.ctx;
-        let t = self.tuning;
-        let c565 = |c: D::Color| -> f32 { Into::<RawU16>::into(c).into_inner() as f32 };
-        match id {
-            0x00 => self.canvas_w as f32,                            // CanvasW
-            0x01 => self.canvas_h as f32,                            // CanvasH
-            0x02 => scale,                                           // CanvasScale
-            0x03 => ctx.now_ms as f32,                               // NowMs
-            0x04 => ctx.breath,                                      // Breath
-            0x05 => ctx.eye_open_ratio,                              // EyeOpen
-            0x06 => ctx.gaze_horizontal + ctx.gaze_saccade_h,        // GazeH
-            0x07 => ctx.gaze_vertical + ctx.gaze_saccade_v,          // GazeV
-            0x08 => ctx.mouth_open_ratio,                            // MouthOpen
-            0x09 => expression_to_f(ctx.expression),                 // Expr
-            0x0A => c565(ctx.palette.primary),                       // Primary
-            0x0B => c565(ctx.palette.background),                    // Background
-            0x0C => c565(ctx.palette.secondary),                     // Secondary
-            0x0D => c565(ctx.palette.balloon_foreground),            // BalloonFg
-            0x0E => c565(ctx.palette.balloon_background),            // BalloonBg
-            0x0F => t.eye_radius,                                    // EyeRadius
-            0x10 => t.eye_off_x,
-            0x11 => t.eye_off_y,
-            0x12 => t.brow_off_x,
-            0x13 => t.brow_off_y,
-            0x14 => t.mouth_off_x,
-            0x15 => t.mouth_off_y,
-            0x16 => t.mouth_min_w as f32,
-            0x17 => t.mouth_max_w as f32,
-            0x18 => t.mouth_min_h as f32,
-            0x19 => t.mouth_max_h as f32,
-            0x1A => t.eyebrows_visible as u8 as f32,
-            0x1B => t.cheeks_visible as u8 as f32,
-            0x1C => t.cheek_radius,
-            0x1D => t.cheek_off_x,
-            0x1E => t.cheek_off_y,
-            _ => 0.0,
-        }
+        read_context_var(self.ctx, self.tuning, self.canvas_w, self.canvas_h, id, scale)
     }
 }
 
-/// Bottom balloon strip (from balloon.cpp). Returns `true` once the message has been
-/// fully displayed.
-fn draw_balloon<D>(
-    display: &mut D,
-    scratch: &mut Vec<u8>,
-    ctx: &DrawContext<D::Color>,
+/// Balloon geometry + timing for the current frame (from balloon.cpp).
+struct BalloonLayout<'t> {
+    text: &'t str,
+    rect: Rectangle,
+    small_panel: bool,
+    scrolling: bool,
+    /// Text anchor x (left edge when scrolling, panel center otherwise).
+    x: i32,
+    mid_y: i32,
+    done: bool,
+}
+
+fn balloon_layout<'t, Color>(
+    ctx: &'t DrawContext<Color>,
     canvas_w: i32,
     canvas_h: i32,
-) -> Result<bool, D::Error>
-where
-    D: DrawTarget,
-    D::Color: VmColor,
-{
-    let Some(text) = ctx.balloon_text.as_deref() else {
-        return Ok(false);
-    };
+) -> Option<BalloonLayout<'t>> {
+    let text = ctx.balloon_text.as_deref()?;
     if text.is_empty() {
-        return Ok(false);
+        return None;
     }
 
     let small_panel = canvas_h <= BALLOON_SMALL_PANEL_THRESHOLD;
-    let font = if small_panel {
+    let font: &embedded_graphics::mono_font::MonoFont<'_> = if small_panel {
         &ascii::FONT_6X10
     } else {
         &ascii::FONT_10X20
@@ -703,8 +840,6 @@ where
     let panel_w = canvas_w - BALLOON_MARGIN * 2;
     let panel_y = canvas_h - panel_h - BALLOON_MARGIN;
 
-    let fg = ctx.palette.balloon_foreground;
-    let bg = ctx.palette.balloon_background;
     let inner_x = panel_x + BALLOON_INNER_PADDING;
     let inner_w = panel_w - 2 * BALLOON_INNER_PADDING;
     let text_w = (font.character_size.width as i32 + font.character_spacing as i32)
@@ -733,37 +868,286 @@ where
         panel_x + panel_w / 2
     };
 
-    let Some(rect) = clamp_rect(panel_x, panel_y, panel_w, panel_h, canvas_w, canvas_h) else {
-        return Ok(done);
-    };
-    ensure_scratch::<D::Color>(scratch, &rect);
-    let Ok(mut sprite) = Sprite::<D::Color>::new_unaligned(scratch, rect) else {
-        return Ok(done);
-    };
-    let _ = sprite.clear(ctx.palette.background);
+    let rect = clamp_rect(panel_x, panel_y, panel_w, panel_h, canvas_w, canvas_h)?;
+    Some(BalloonLayout {
+        text,
+        rect,
+        small_panel,
+        scrolling,
+        x,
+        mid_y,
+        done,
+    })
+}
+
+/// Draw the balloon panel + text into a sprite covering `layout.rect` (which doubles
+/// as the marquee clip region).
+fn compose_balloon_into<Color: VmColor>(
+    sprite: &mut Sprite<'_, Color>,
+    ctx: &DrawContext<Color>,
+    layout: &BalloonLayout<'_>,
+) {
+    let fg = ctx.palette.balloon_foreground;
+    let bg = ctx.palette.balloon_background;
     let panel = RoundedRectangle::new(
-        Rectangle::new(
-            Point::new(panel_x, panel_y),
-            Size::new(panel_w as u32, panel_h as u32),
-        ),
+        layout.rect,
         CornerRadii::new(Size::new(BALLOON_PANEL_RADIUS, BALLOON_PANEL_RADIUS)),
     );
-    let _ = panel.into_styled(PrimitiveStyle::with_fill(bg)).draw(&mut sprite);
-    let _ = panel
-        .into_styled(PrimitiveStyle::with_stroke(fg, 1))
-        .draw(&mut sprite);
-    // The scratch sprite covers exactly the panel rect, so it doubles as the marquee
-    // clip region.
+    let _ = panel.into_styled(PrimitiveStyle::with_fill(bg)).draw(sprite);
+    let _ = panel.into_styled(PrimitiveStyle::with_stroke(fg, 1)).draw(sprite);
+    let font: &embedded_graphics::mono_font::MonoFont<'_> = if layout.small_panel {
+        &ascii::FONT_6X10
+    } else {
+        &ascii::FONT_10X20
+    };
     let style = MonoTextStyle::new(font, fg);
     let text_style = TextStyleBuilder::new()
-        .alignment(if scrolling {
+        .alignment(if layout.scrolling {
             Alignment::Left
         } else {
             Alignment::Center
         })
         .baseline(Baseline::Middle)
         .build();
-    let _ = Text::with_text_style(text, Point::new(x, mid_y), style, text_style).draw(&mut sprite);
+    let _ = Text::with_text_style(
+        layout.text,
+        Point::new(layout.x, layout.mid_y),
+        style,
+        text_style,
+    )
+    .draw(sprite);
+}
+
+/// Bottom balloon strip (from balloon.cpp), blocking path. Returns `true` once the
+/// message has been fully displayed.
+fn draw_balloon<D>(
+    display: &mut D,
+    scratch: &mut Vec<u8>,
+    ctx: &DrawContext<D::Color>,
+    canvas_w: i32,
+    canvas_h: i32,
+) -> Result<bool, D::Error>
+where
+    D: DrawTarget,
+    D::Color: VmColor,
+{
+    let Some(layout) = balloon_layout(ctx, canvas_w, canvas_h) else {
+        return Ok(false);
+    };
+    ensure_scratch::<D::Color>(scratch, &layout.rect);
+    let Ok(mut sprite) = Sprite::<D::Color>::new_unaligned(scratch, layout.rect) else {
+        return Ok(layout.done);
+    };
+    let _ = sprite.clear(ctx.palette.background);
+    compose_balloon_into(&mut sprite, ctx, &layout);
     sprite.draw(display)?;
-    Ok(done)
+    Ok(layout.done)
+}
+
+
+/// [`vm::VmCanvas`] backend that composes each group into an arena slice and records a
+/// [`BlitOp`] instead of touching the display — the async tick transfers the recorded
+/// blits afterwards. Non-grouped primitives get a synthetic group covering their
+/// bounding box, pre-filled with the background (only the static cheek marks use this
+/// path in the default face).
+struct RecordingCanvas<'a, Color> {
+    arena: &'a mut Vec<u8>,
+    ops: &'a mut Vec<BlitOp>,
+    ctx: &'a DrawContext<Color>,
+    tuning: &'a FaceTuning,
+    canvas_w: i32,
+    canvas_h: i32,
+    /// Active group: canvas rect + arena start offset.
+    group: Option<(Rectangle, usize)>,
+}
+
+impl<'a, Color: VmColor> RecordingCanvas<'a, Color> {
+    /// Reserve an arena slice for `rect` and pre-fill it with the background.
+    /// Returns the slice start, or `None` when the arena cap would be exceeded.
+    fn alloc_group(&mut self, rect: Rectangle) -> Option<usize> {
+        // Keep pixel data 2-byte aligned so it can be reinterpreted as u16 rows.
+        let start = (self.arena.len() + 1) & !1;
+        let len = Sprite::<Color>::unaligned_buffer_size(rect.size.width, rect.size.height);
+        if start + len > ARENA_CAP {
+            return None;
+        }
+        // Exact growth: the amortized doubling of `resize` alone can nearly double the
+        // peak heap use of the frame arena.
+        if self.arena.capacity() < start + len {
+            self.arena.reserve_exact(start + len - self.arena.len());
+        }
+        self.arena.resize(start + len, 0);
+        if let Ok(mut sprite) = Sprite::<Color>::new_unaligned(&mut self.arena[start..], rect) {
+            let _ = sprite.clear(self.ctx.palette.background);
+            Some(start)
+        } else {
+            None
+        }
+    }
+
+    fn draw_recorded(&mut self, drawable: &impl Drawable<Color = Color>, bbox: Rectangle) {
+        if let Some((rect, start)) = self.group {
+            if let Ok(mut sprite) = Sprite::<Color>::new_unaligned(&mut self.arena[start..], rect)
+            {
+                let _ = drawable.draw(&mut sprite);
+            }
+        } else {
+            // Direct primitive: synthesize a one-off group over its bounding box.
+            let Some(rect) = clamp_rect(
+                bbox.top_left.x,
+                bbox.top_left.y,
+                bbox.size.width as i32,
+                bbox.size.height as i32,
+                self.canvas_w,
+                self.canvas_h,
+            ) else {
+                return;
+            };
+            let Some(start) = self.alloc_group(rect) else {
+                return;
+            };
+            if let Ok(mut sprite) = Sprite::<Color>::new_unaligned(&mut self.arena[start..], rect)
+            {
+                let _ = drawable.draw(&mut sprite);
+            }
+            let len = Sprite::<Color>::unaligned_buffer_size(rect.size.width, rect.size.height);
+            self.ops.push(BlitOp { rect, start, len });
+        }
+    }
+}
+
+impl<'a, Color: VmColor> vm::VmCanvas for RecordingCanvas<'a, Color> {
+    fn width(&self) -> i32 {
+        self.canvas_w
+    }
+    fn height(&self) -> i32 {
+        self.canvas_h
+    }
+
+    fn fill_rect(&mut self, mut x: i32, mut y: i32, mut w: i32, mut h: i32, color: u16) {
+        if w < 0 {
+            x += w;
+            w = -w;
+        }
+        if h < 0 {
+            y += h;
+            h = -h;
+        }
+        if w == 0 || h == 0 {
+            return;
+        }
+        let color = Color::from(RawU16::new(color));
+        let rect = Rectangle::new(Point::new(x, y), Size::new(w as u32, h as u32));
+        let prim = rect.into_styled(PrimitiveStyle::with_fill(color));
+        self.draw_recorded(&prim, rect);
+    }
+
+    fn fill_circle(&mut self, cx: i32, cy: i32, r: i32, color: u16) {
+        if r < 0 {
+            return;
+        }
+        let color = Color::from(RawU16::new(color));
+        let circle = Circle::new(Point::new(cx - r, cy - r), (r * 2 + 1) as u32);
+        let bbox = circle.bounding_box();
+        let prim = circle.into_styled(PrimitiveStyle::with_fill(color));
+        self.draw_recorded(&prim, bbox);
+    }
+
+    fn fill_triangle(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, x2: i32, y2: i32, color: u16) {
+        let color = Color::from(RawU16::new(color));
+        let tri = Triangle::new(Point::new(x0, y0), Point::new(x1, y1), Point::new(x2, y2));
+        let bbox = tri.bounding_box();
+        let prim = tri.into_styled(PrimitiveStyle::with_fill(color));
+        self.draw_recorded(&prim, bbox);
+    }
+
+    fn begin_group(&mut self, x: i32, y: i32, w: i32, h: i32) {
+        self.group = None;
+        let Some(rect) = clamp_rect(x, y, w, h, self.canvas_w, self.canvas_h) else {
+            return;
+        };
+        if let Some(start) = self.alloc_group(rect) {
+            self.group = Some((rect, start));
+        }
+    }
+
+    fn end_group(&mut self) {
+        let Some((rect, start)) = self.group.take() else {
+            return;
+        };
+        let len = Sprite::<Color>::unaligned_buffer_size(rect.size.width, rect.size.height);
+        self.ops.push(BlitOp { rect, start, len });
+    }
+
+    fn read_var(&self, id: u8, scale: f32) -> f32 {
+        read_context_var(self.ctx, self.tuning, self.canvas_w, self.canvas_h, id, scale)
+    }
+}
+
+/// Compose the balloon into the arena and record its blit. Returns the `done` flag.
+fn compose_balloon_op<Color: VmColor>(
+    arena: &mut Vec<u8>,
+    ops: &mut Vec<BlitOp>,
+    ctx: &DrawContext<Color>,
+    canvas_w: i32,
+    canvas_h: i32,
+) -> bool {
+    let Some(layout) = balloon_layout(ctx, canvas_w, canvas_h) else {
+        return false;
+    };
+    let start = (arena.len() + 1) & !1;
+    let len =
+        Sprite::<Color>::unaligned_buffer_size(layout.rect.size.width, layout.rect.size.height);
+    if start + len > ARENA_CAP {
+        return layout.done;
+    }
+    if arena.capacity() < start + len {
+        arena.reserve_exact(start + len - arena.len());
+    }
+    arena.resize(start + len, 0);
+    if let Ok(mut sprite) = Sprite::<Color>::new_unaligned(&mut arena[start..], layout.rect) {
+        let _ = sprite.clear(ctx.palette.background);
+        compose_balloon_into(&mut sprite, ctx, &layout);
+        ops.push(BlitOp {
+            rect: layout.rect,
+            start,
+            len,
+        });
+    }
+    layout.done
+}
+
+
+/// Painter's-order overlap resolution for recorded blits: for each pair (earlier A,
+/// later B) with intersecting rects, copy B's pixels over A's buffer in the overlap.
+/// The final panel content is unchanged (B still blits later); only the transient
+/// erased state between the two transfers disappears.
+fn merge_overlapping_ops(arena: &mut [u8], ops: &[BlitOp]) {
+    for bi in 1..ops.len() {
+        for ai in 0..bi {
+            let a = ops[ai];
+            let b = ops[bi];
+            let inter = a.rect.intersection(&b.rect);
+            if inter.size.width == 0 || inter.size.height == 0 {
+                continue;
+            }
+            // Ops are recorded in arena order, so A's buffer lies strictly before B's.
+            let (head, tail) = arena.split_at_mut(b.start);
+            let a_buf = &mut head[a.start..a.start + a.len];
+            let b_buf = &tail[..b.len];
+            let a_stride = a.rect.size.width as usize * 2;
+            let b_stride = b.rect.size.width as usize * 2;
+            let row_bytes = inter.size.width as usize * 2;
+            for row in 0..inter.size.height as usize {
+                let ay = (inter.top_left.y - a.rect.top_left.y) as usize + row;
+                let by = (inter.top_left.y - b.rect.top_left.y) as usize + row;
+                let ax = (inter.top_left.x - a.rect.top_left.x) as usize * 2;
+                let bx = (inter.top_left.x - b.rect.top_left.x) as usize * 2;
+                let a_off = ay * a_stride + ax;
+                let b_off = by * b_stride + bx;
+                a_buf[a_off..a_off + row_bytes]
+                    .copy_from_slice(&b_buf[b_off..b_off + row_bytes]);
+            }
+        }
+    }
 }
