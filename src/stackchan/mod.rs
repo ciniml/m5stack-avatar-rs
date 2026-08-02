@@ -16,8 +16,9 @@
 //! neither flicker nor leave residue.
 //!
 //! Differences from the C++ implementation:
-//! - Balloon text uses an embedded-graphics monospace ASCII font instead of
-//!   `lgfxJapanGothic`; Japanese text is not yet supported.
+//! - Balloon text uses the u8g2 `b16`/`b12` Japanese fonts (JIS X 0208 levels 1+2)
+//!   instead of `lgfxJapanGothic` — same coverage, 16 px instead of 24 px on the big
+//!   panel because u8g2 has no larger Japanese cut.
 
 pub mod vm;
 
@@ -25,13 +26,13 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use embedded_graphics::draw_target::DrawTarget;
-use embedded_graphics::mono_font::{MonoTextStyle, ascii};
 use embedded_graphics::pixelcolor::raw::RawU16;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{
     Circle, CornerRadii, PrimitiveStyle, Rectangle, RoundedRectangle, Triangle,
 };
-use embedded_graphics::text::{Alignment, Baseline, Text, TextStyleBuilder};
+use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
+use u8g2_fonts::{FontRenderer, fonts as u8g2};
 
 use crate::Expression;
 use crate::sprite::Sprite;
@@ -312,6 +313,25 @@ const BALLOON_SMALL_PANEL_H: i32 = 22;
 const BALLOON_SCROLL_PX_PER_SEC: i32 = 60;
 const BALLOON_REPEAT_GAP_PX: i32 = 60;
 const BALLOON_DEFAULT_STATIC_HOLD_MS: u32 = 3000;
+
+/// Balloon text font (u8g2 Japanese, JIS X 0208 levels 1+2; the C++ firmware's
+/// `lgfxJapanGothic_24`/`_12` equivalent). Unknown glyphs are skipped rather than
+/// erroring out mid-string.
+fn balloon_font(small_panel: bool) -> FontRenderer {
+    if small_panel {
+        FontRenderer::new::<u8g2::u8g2_font_b12_t_japanese3>()
+    } else {
+        FontRenderer::new::<u8g2::u8g2_font_b16_b_t_japanese3>()
+    }
+    .with_ignore_unknown_chars(true)
+}
+
+/// Advance width of `text` in the balloon font.
+fn balloon_text_width(font: &FontRenderer, text: &str) -> i32 {
+    font.get_rendered_dimensions(text, Point::zero(), VerticalPosition::Baseline)
+        .map(|d| d.advance.x)
+        .unwrap_or(0)
+}
 
 /// stackchan-idf–style avatar. Owns no display: [`Self::tick`] composes one frame into
 /// the borrowed `DrawTarget`.
@@ -826,11 +846,7 @@ fn balloon_layout<'t, Color>(
     }
 
     let small_panel = canvas_h <= BALLOON_SMALL_PANEL_THRESHOLD;
-    let font: &embedded_graphics::mono_font::MonoFont<'_> = if small_panel {
-        &ascii::FONT_6X10
-    } else {
-        &ascii::FONT_10X20
-    };
+    let font = balloon_font(small_panel);
     let panel_h = if small_panel {
         BALLOON_SMALL_PANEL_H
     } else {
@@ -842,8 +858,7 @@ fn balloon_layout<'t, Color>(
 
     let inner_x = panel_x + BALLOON_INNER_PADDING;
     let inner_w = panel_w - 2 * BALLOON_INNER_PADDING;
-    let text_w = (font.character_size.width as i32 + font.character_spacing as i32)
-        * text.chars().count() as i32;
+    let text_w = balloon_text_width(&font, text);
     let mid_y = panel_y + panel_h / 2;
     let elapsed_ms = ctx.now_ms.wrapping_sub(ctx.balloon_set_ms);
     let hold_ms = ctx.balloon_hold_ms;
@@ -895,27 +910,19 @@ fn compose_balloon_into<Color: VmColor>(
     );
     let _ = panel.into_styled(PrimitiveStyle::with_fill(bg)).draw(sprite);
     let _ = panel.into_styled(PrimitiveStyle::with_stroke(fg, 1)).draw(sprite);
-    let font: &embedded_graphics::mono_font::MonoFont<'_> = if layout.small_panel {
-        &ascii::FONT_6X10
-    } else {
-        &ascii::FONT_10X20
-    };
-    let style = MonoTextStyle::new(font, fg);
-    let text_style = TextStyleBuilder::new()
-        .alignment(if layout.scrolling {
-            Alignment::Left
-        } else {
-            Alignment::Center
-        })
-        .baseline(Baseline::Middle)
-        .build();
-    let _ = Text::with_text_style(
+    let font = balloon_font(layout.small_panel);
+    let _ = font.render_aligned(
         layout.text,
         Point::new(layout.x, layout.mid_y),
-        style,
-        text_style,
-    )
-    .draw(sprite);
+        VerticalPosition::Center,
+        if layout.scrolling {
+            HorizontalAlignment::Left
+        } else {
+            HorizontalAlignment::Center
+        },
+        FontColor::Transparent(fg),
+        sprite,
+    );
 }
 
 /// Bottom balloon strip (from balloon.cpp), blocking path. Returns `true` once the
